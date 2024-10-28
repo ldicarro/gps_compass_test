@@ -5,17 +5,22 @@
 #include <WebServer.h>
 #include <TinyGPSPlus.h>
 #include "mainpage.h"
+#include <SPI.h>
+#include <SD.h>
 
-// Compass
+// --------------------------------------------------
+// compass
 QMC5883LCompass compass;
 
-// Web Server
+// --------------------------------------------------
+// web Server
 //provide your own WiFi SSID and password
 const char* ssid = "BrapDeco";
 const char* password = "cleanbrain303";
 
 WebServer server(80);
 
+// --------------------------------------------------
 // GPS Module
 // Define pins for serial 2
 #define RXD2 16
@@ -25,66 +30,74 @@ WebServer server(80);
 TinyGPSPlus gps;
 HardwareSerial gpsSerial(2); // create instance of HW serial for GPS
 
-// get the reading from the compass and return the value
-float getHeading() {
-  delay(100);
-  /* Get a new sensor event */ 
-  compass.read();
+// --------------------------------------------------
+// SD card
+File filePtr;
 
-  byte az = compass.getAzimuth();
-  byte bearing = compass.getBearing(az); // 0 - 11
+// --------------------------------------------------
+// state timer
+unsigned long startMillis;
+unsigned long currentMillis;
+const unsigned long period = 10000; 
 
-  return bearing;
-}
-
-// This custom version of delay() ensures that the gps object
-// is being "fed".
-static void smartDelay(unsigned long ms)
-{
-  unsigned long start = millis();
-  do 
-  {
-    while (gpsSerial.available())
-      gps.encode(gpsSerial.read());
-  } while (millis() - start < ms);
-}
-
-
+// --------------------------------------------------
+// SETUP
 void setup(void) 
 {
   Serial.begin(115200);
+
+  // --------------------------------------------------
+  // initialize the sd card
+  if(!SD.begin(5)) {
+    Serial.println("sd card initialization failed");
+    while(1); // loop forever on error
+  }
+  Serial.println("sd card initialized");
   
-  /* Initialize the compass */
+
+  // --------------------------------------------------
+  // initialize the compass
   compass.init();
   compass.setCalibrationOffsets(-290.00, -139.00, -813.00);
   compass.setCalibrationScales(0.98, 1.64, 0.73);
 
-  /* Initialize the GPS module */
+  // --------------------------------------------------
+  // initialize the GPS module
   gpsSerial.begin(GPS_BAUD, SERIAL_8N1, RXD2, TXD2);
 
-  /* Initialize the web server */
-  //Use ESP32 as WiFi Station
+  // --------------------------------------------------
+  // initialize the web server
   WiFi.mode(WIFI_STA);
-  //Initiate WiFi Connection
+
+  // initiate WiFi Connection
   WiFi.begin(ssid, password);
   Serial.println("");
-  // Wait for connection
+
+  // wait for connection
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
   }
+
+  // break out of while loop after connection
   Serial.println("");
   Serial.print("Connected to ");
-  //Print your WiFi's SSID (might be insecure)
+  
+  // print SSID (might be insecure)
   Serial.println(ssid);
   Serial.print("IP address: ");
-  //Print your local IP address (needed for browsing the app)
+  
+  // print local IP address (needed for browsing the app)
   Serial.println(WiFi.localIP());
-   //Home page. Contents of 'page' is in mainpage.h
+  
+  // --------------------------------------------------
+  // server event handlers
+  // send home page. Contents of 'page' is in mainpage.h
   server.on("/", []() {
    server.send(200, "text/html", page);
   });
-  //Page for reading data. Sensor is read in this part
+
+  // send data as json
   server.on("/data", [](){
     smartDelay(1000);
 
@@ -103,16 +116,27 @@ void setup(void)
 
     server.send(200, "application/json", text);
   });
-  //start web server
+
+  // start web server
   server.begin();
-  //Just stating things
   Serial.println("HTTP server started");
+
+  // setup timer
+  startMillis = millis();
+
 }
 
+// --------------------------------------------------
+// LOOP
 void loop(void) 
 {
-  //Make the ESP32 always handle web clients
+  // handle web clients
   server.handleClient();
 
-  delay(1000);
+  // write file every 10 seconds
+  currentMillis = millis();
+  if(currentMillis - startMillis >= period) {
+    writeFile();
+    startMillis = currentMillis;
+  }
 }
